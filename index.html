@@ -32,8 +32,12 @@
   <h2>📍 外出位置共享</h2>
   <label for="in-name">你的名稱</label>
   <input id="in-name" placeholder="例如：志成" maxlength="20" autocomplete="off">
-  <label for="in-dest">目的地（發起人填，輸入選下拉）</label>
-  <input id="in-dest" placeholder="例如：台北101" autocomplete="off">
+  <label for="in-dest">目的地（發起人填）</label>
+  <div style="display:flex; gap:8px">
+    <input id="in-dest" placeholder="例如：台北101" autocomplete="off" style="flex:1">
+    <button class="btn-sub" id="btn-search" style="width:auto; margin-top:0; padding:12px 16px; white-space:nowrap">搜尋</button>
+  </div>
+  <div id="dest-results" style="margin-top:8px"></div>
   <button class="btn-go" id="btn-create">發起新的共享</button>
   <label for="in-code">加入代碼（6 碼）</label>
   <input id="in-code" placeholder="例如：A3K9P2" maxlength="6" autocomplete="off" style="text-transform:uppercase">
@@ -98,7 +102,7 @@ function loadMaps() {
     if (!GOOGLE_MAPS_KEY || GOOGLE_MAPS_KEY === "PASTE_HERE")
       return reject(new Error("還沒填 GOOGLE_MAPS_KEY（看 README 申請步驟）"));
     const s = document.createElement("script");
-    s.src = "https://maps.googleapis.com/maps/api/js?key=" + GOOGLE_MAPS_KEY + "&libraries=places";
+    s.src = "https://maps.googleapis.com/maps/api/js?key=" + GOOGLE_MAPS_KEY;
     s.onload = resolve;
     s.onerror = () => reject(new Error("Google Maps 載入失敗，檢查金鑰"));
     document.head.appendChild(s);
@@ -228,7 +232,7 @@ async function doCreate() {
   err("");
   myName = $("in-name").value.trim();
   if (!myName) return err("先輸名稱");
-  if (!chosenPlace) return err("目的地請輸入後點下拉選一個");
+  if (!chosenPlace) return err("目的地請按搜尋後點選一個候選");
   try {
     initFirebase();
     await loadMaps();
@@ -279,18 +283,36 @@ async function doLeave(msg) {
 }
 
 function attachAutocomplete() {
-  try {
-    const ac = new google.maps.places.Autocomplete($("in-dest"), { fields: ["name", "geometry"] });
-    ac.addListener("place_changed", () => {
-      const p = ac.getPlace();
-      if (p && p.geometry && p.geometry.location) {
-        chosenPlace = { name: p.name, lat: p.geometry.location.lat(), lng: p.geometry.location.lng() };
-      } else {
-        chosenPlace = null;
+  // 改用 Geocoder（免 Places API，新專案可用）：搜尋後列候選點選
+  $("btn-search").onclick = () => {
+    err("");
+    const kw = $("in-dest").value.trim();
+    if (!kw) return err("先輸目的地關鍵字");
+    const box = $("dest-results");
+    box.innerHTML = "搜尋中…";
+    new google.maps.Geocoder().geocode({ address: kw }, (res, status) => {
+      if (status !== "OK" || !res || !res.length) {
+        box.innerHTML = "";
+        return err("找不到地點，換個關鍵字試試");
       }
+      box.innerHTML = "";
+      res.slice(0, 3).forEach((r, i) => {
+        const b = document.createElement("button");
+        b.className = "btn-sub";
+        b.innerText = (i + 1) + ". " + r.formatted_address;
+        b.onclick = () => {
+          chosenPlace = {
+            name: r.formatted_address,
+            lat: r.geometry.location.lat(),
+            lng: r.geometry.location.lng()
+          };
+          box.innerHTML = "<div style='color:#15803d;font-weight:bold'>已選：" + r.formatted_address + "</div>";
+        };
+        box.appendChild(b);
+      });
     });
-    $("in-dest").addEventListener("input", () => { chosenPlace = null; });
-  } catch (e) {}
+  };
+  $("in-dest").addEventListener("input", () => { chosenPlace = null; $("dest-results").innerHTML = ""; });
 }
 
 $("btn-create").onclick = doCreate;
