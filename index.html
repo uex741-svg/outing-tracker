@@ -203,7 +203,27 @@ function renderMembers(list) {
 
 const MODE_LABEL = { DRIVE: "汽車", TWO_WHEELER: "機車", TRANSIT: "大眾運輸", WALK: "步行", BICYCLE: "自行車" };
 
-async function computeRoute(o, d, mode) {
+async function routeViaDirections(o, d, mode) {
+  const m = { DRIVE: "DRIVING", TWO_WHEELER: "DRIVING", TRANSIT: "TRANSIT", WALK: "WALKING", BICYCLE: "BICYCLING" };
+  return new Promise((resolve, reject) => {
+    new google.maps.DirectionsService().route({
+      origin: { lat: o.lat, lng: o.lng },
+      destination: { lat: d.lat, lng: d.lng },
+      travelMode: m[mode] || "DRIVING"
+    }, (res, status) => {
+      if (status !== "OK" || !res.routes || !res.routes.length)
+        return reject(new Error("Directions:" + status));
+      const leg = res.routes[0].legs[0];
+      resolve({
+        poly: res.routes[0].overview_polyline,
+        distM: leg.distance.value,
+        durS: leg.duration.value
+      });
+    });
+  });
+}
+
+async function routeViaRoutesApi(o, d, mode) {
   const res = await fetch("https://routes.googleapis.com/directions/v2:routes", {
     method: "POST",
     headers: {
@@ -222,6 +242,13 @@ async function computeRoute(o, d, mode) {
   if (!j.routes || !j.routes.length) throw new Error("查無路線，換交通方式或地點試試");
   const r = j.routes[0];
   return { poly: r.polyline.encodedPolyline, distM: r.distanceMeters, durS: parseInt(r.duration) || 0 };
+}
+
+// 雙保險：內建 Directions 優先，Routes API 備援，都不行就回 null（共享照開，只是沒藍線）
+async function computeRoute(o, d, mode) {
+  try { return await routeViaDirections(o, d, mode); } catch (e) {}
+  try { return await routeViaRoutesApi(o, d, mode); } catch (e) {}
+  return null;
 }
 
 function decodePoly(enc) {
@@ -332,6 +359,7 @@ async function doCreate() {
     err("規劃路線中…");
     const route = await computeRoute(origin, chosenPlace, mode);
     err("");
+    if (!route) setTimeout(() => alert("路線暫時畫不出，共享照常建立（人員位置正常）"), 500);
     myKey = myName + "_" + Math.random().toString(36).slice(2, 6);
     const code = rndCode();
     await db.ref("sessions/" + code).set({
