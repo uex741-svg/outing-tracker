@@ -33,6 +33,16 @@
   #peerinfo { display: none; padding: 6px 12px; background: #eef2ff; color: #3730a3; font-size: .85rem; font-weight: bold; }
   .chip.stale { background: #e2e8f0; color: #64748b; }
   .err { color: #dc2626; font-size: .9rem; margin-top: 8px; min-height: 1.2em; }
+  .divider { display: flex; align-items: center; gap: 8px; color: #94a3b8; font-size: .8rem; margin: 20px 0 4px; }
+  .divider::before, .divider::after { content: ""; flex: 1; border-top: 1px solid #e2e8f0; }
+  #dest-modal { display: none; position: fixed; inset: 0; background: rgba(15,23,42,.55); z-index: 9999; padding: 20px; }
+  #dest-card { background: #fff; border-radius: 12px; max-width: 380px; margin: 8vh auto 0; overflow: hidden; }
+  #mini-map { height: 220px; width: 100%; }
+  #dest-card .body { padding: 14px 16px; }
+  #dest-card .name { font-weight: bold; font-size: 1rem; }
+  #dest-card .addr { font-size: .85rem; color: #64748b; margin-top: 4px; }
+  #dest-card .row { display: flex; gap: 8px; padding: 0 16px 16px; }
+  #dest-card .row button { margin: 0; flex: 1; }
 </style>
 </head>
 <body>
@@ -56,6 +66,7 @@
     <option value="BICYCLE">自行車</option>
   </select>
   <button class="btn-go" id="btn-create">發起新的共享</button>
+  <div class="divider">或加入別人的</div>
   <label for="in-code">加入代碼（6 碼）</label>
   <input id="in-code" placeholder="例如：A3K9P2" maxlength="6" autocomplete="off" style="text-transform:uppercase">
   <div id="join-preview" style="margin-top:8px;font-size:.9rem;color:#0369a1"></div>
@@ -79,6 +90,20 @@
   </div>
 </div>
 
+<div id="dest-modal">
+  <div id="dest-card">
+    <div id="mini-map"></div>
+    <div class="body">
+      <div class="name" id="mini-name"></div>
+      <div class="addr" id="mini-addr"></div>
+    </div>
+    <div class="row">
+      <button class="btn-sub" id="btn-mini-cancel">重選</button>
+      <button class="btn-go" id="btn-mini-ok">確定是這裡</button>
+    </div>
+  </div>
+</div>
+
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-database-compat.js"></script>
 <script>
@@ -98,7 +123,7 @@ const STALE_MS = 120000;       // 超過 2 分鐘沒更新視為離線
 
 let db = null, map = null, markers = {}, watchId = null, pushTimer = null, leftTimer = null;
 let myCode = "", myName = "", myKey = "", myRef = null, membersRef = null, sessionRef = null;
-let destMarker = null, routeLine = null, peerLine = null, iconCache = {};
+let destMarker = null, routeLine = null, peerLine = null, iconCache = {}, miniMap = null, miniMarker = null, tempPlace = null;
 let lastDest = null, lastRoute = null, lastList = null, myPos = null, peerKey = null;
 let expiresAt = 0, isCreator = false, chosenPlace = null, routeErrs = [];
 const SESSION_MS = 2 * 3600 * 1000;  // 每次 2 小時
@@ -532,11 +557,7 @@ function wireSearch(inId, btnId, boxId, cb) {
         const b = document.createElement("button");
         b.className = "btn-sub";
         b.innerText = (i + 1) + ". " + r.formatted_address;
-        b.onclick = () => {
-          cb({ name: r.formatted_address, lat: r.geometry.location.lat(), lng: r.geometry.location.lng() });
-          $(inId).value = r.formatted_address;
-          box.innerHTML = "<div style='color:#15803d;font-weight:bold'>已選：" + r.formatted_address + "</div>";
-        };
+        b.onclick = () => openDestModal(r);
         box.appendChild(b);
       });
     });
@@ -550,6 +571,25 @@ function wireSearch(inId, btnId, boxId, cb) {
     const kw = $(inId).value.trim();
     if (kw.length >= 2) timer = setTimeout(run, 600);
   });
+}
+
+function openDestModal(r) {
+  tempPlace = {
+    name: r.formatted_address,
+    lat: r.geometry.location.lat(),
+    lng: r.geometry.location.lng()
+  };
+  $("mini-name").innerText = r.formatted_address;
+  $("mini-addr").innerText = "約 " + tempPlace.lat.toFixed(5) + ", " + tempPlace.lng.toFixed(5);
+  $("dest-modal").style.display = "block";
+  const pos = { lat: tempPlace.lat, lng: tempPlace.lng };
+  if (!miniMap) {
+    miniMap = new google.maps.Map($("mini-map"), { center: pos, zoom: 16, mapTypeControl: false, streetViewControl: false, fullscreenControl: false });
+    miniMarker = new google.maps.Marker({ map: miniMap, position: pos });
+  } else {
+    miniMap.setCenter(pos);
+    miniMarker.setPosition(pos);
+  }
 }
 
 function attachAutocomplete() {
@@ -593,6 +633,16 @@ function fmtLeft(exp) {
   return Math.floor(ms / 3600000) + "時" + Math.floor(ms % 3600000 / 60000) + "分";
 }
 
+$("btn-mini-ok").onclick = () => {
+  if (tempPlace) {
+    chosenPlace = tempPlace;
+    $("in-dest").value = tempPlace.name;
+    $("dest-results").innerHTML = "<div style='color:#15803d;font-weight:bold'>已選：" + tempPlace.name + "</div>";
+  }
+  $("dest-modal").style.display = "none";
+};
+$("btn-mini-cancel").onclick = () => { tempPlace = null; $("dest-modal").style.display = "none"; };
+$("dest-modal").addEventListener("click", e => { if (e.target.id === "dest-modal") { tempPlace = null; $("dest-modal").style.display = "none"; } });
 $("btn-create").onclick = doCreate;
 $("btn-join").onclick = doJoin;
 $("btn-leave").onclick = () => doLeave();
