@@ -277,8 +277,10 @@ function renderMembers(list) {
   const now = Date.now();
   Object.keys(list || {}).forEach(key => {
     const m = list[key];
-    const stale = now - (m.updatedAt || 0) > STALE_MS;
-    const sec = Math.max(0, Math.floor((now - (m.updatedAt || 0)) / 1000));
+    const rawTs = (m.updatedAt || 0);
+    const tms = rawTs < 1e12 ? rawTs * 1000 : rawTs;  // 相容秒級時間戳（外部裝置）
+    const stale = now - tms > STALE_MS;
+    const sec = Math.max(0, Math.floor((now - tms) / 1000));
     const ago = sec < 60 ? sec + "秒前" : Math.floor(sec / 60) + "分前";
     const chip = document.createElement("span");
     chip.className = "chip" + (stale ? " stale" : "") + (key === peerKey ? " sel" : "");
@@ -414,7 +416,11 @@ async function enterMap(code) {
   $("view-home").style.display = "none";
   $("view-map").style.display = "flex";
   membersRef = db.ref("sessions/" + code + "/members");
-  if (!myKey) myKey = myName + "_" + Math.random().toString(36).slice(2, 6);
+  if (!myKey) {
+    let suffix = "";
+    try { suffix = sessionStorage.getItem("outing_k") || ""; } catch (e) {}
+    myKey = myName + "_" + (suffix || Math.random().toString(36).slice(2, 6));
+  }
   try { localStorage.setItem("outing_last", JSON.stringify({ code, name: myName, myKey })); } catch (e) {}
   myRef = membersRef.child(myKey);
   await myRef.onDisconnect().remove();   // 關網頁自動清除
@@ -510,7 +516,9 @@ async function doCreate() {
     err("規劃路線中…");
     const route = await computeRoute(origin, chosenPlace, mode);
     err("");
-    myKey = myName + "_" + Math.random().toString(36).slice(2, 6);
+    let suffix = "";
+    try { suffix = sessionStorage.getItem("outing_k") || ""; } catch (e) {}
+    myKey = myName + "_" + (suffix || Math.random().toString(36).slice(2, 6));
     const code = rndCode();
     await db.ref("sessions/" + code).set({
       createdAt: Date.now(),
@@ -703,11 +711,17 @@ $("in-code").addEventListener("input", () => {
 });
 // 分享連結進來：自動填代碼＋預覽，名稱自己輸
 try {
-  const qc = new URLSearchParams(location.search).get("c");
+  const qs = new URLSearchParams(location.search);
+  const qc = qs.get("c");
   if (qc && /^[A-Za-z0-9]{6}$/.test(qc)) {
     document.body.classList.add("join-mode");
     $("in-code").value = qc.toUpperCase();
     previewSession(qc.toUpperCase());
+  }
+  // 外部裝置固定後綴（Tasker/捷徑用同一 key，避免分身）：?c=代碼&k=後綴
+  const qk = qs.get("k");
+  if (qk && /^[A-Za-z0-9]{1,8}$/.test(qk)) {
+    try { sessionStorage.setItem("outing_k", qk); } catch (e) {}
   }
 } catch (e) {}
 // PWA：可加到主畫面獨立開（僅 http(s)，file:// 跳過）
