@@ -154,7 +154,11 @@ function startTracking() {
   if (!navigator.geolocation) { err("此瀏覽器不支援定位"); return; }
   const onPos = p => {
     if (!map) {
-      map = new google.maps.Map($("map"), { center: { lat: p.coords.latitude, lng: p.coords.longitude }, zoom: 15 });
+      map = new google.maps.Map($("map"), {
+        center: { lat: p.coords.latitude, lng: p.coords.longitude }, zoom: 15,
+        mapTypeControl: false, streetViewControl: false, fullscreenControl: false,
+        zoomControl: true, gestureHandling: "greedy"
+      });
       if (lastDest) showDest(lastDest);
       drawRoute();
       if (lastList) renderMembers(lastList);  // 地圖建好後重畫標記（修加入者空白）
