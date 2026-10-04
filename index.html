@@ -266,9 +266,11 @@ function renderMembers(list) {
   Object.keys(list || {}).forEach(key => {
     const m = list[key];
     const stale = now - (m.updatedAt || 0) > STALE_MS;
+    const sec = Math.max(0, Math.floor((now - (m.updatedAt || 0)) / 1000));
+    const ago = sec < 60 ? sec + "秒前" : Math.floor(sec / 60) + "分前";
     const chip = document.createElement("span");
     chip.className = "chip" + (stale ? " stale" : "") + (key === peerKey ? " sel" : "");
-    chip.innerText = (m.name || key) + (stale ? "（離線）" : "");
+    chip.innerText = (m.name || key) + "・" + ago + (stale ? "（離線）" : "");
     chip.onclick = () => selectPeer(key);
     box.appendChild(chip);
     if (!map) return;  // 地圖還沒好只畫名單，標記等地圖建好重畫
@@ -411,6 +413,7 @@ async function enterMap(code) {
   });
   leftTimer = setInterval(() => {
     tickClock();
+    if (lastList) renderMembers(lastList);  // 順便刷新每人幾秒前
     if (expiresAt && Date.now() > expiresAt) expireLeave("時間到，本次共享已結束");
   }, 15000);
   startTracking();
