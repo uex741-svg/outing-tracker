@@ -177,6 +177,7 @@ function pushPos(pos) {
     lat: pos.coords.latitude,
     lng: pos.coords.longitude,
     acc: Math.round(pos.coords.accuracy || 0),
+    fg: !document.hidden,
     updatedAt: Date.now()
   });
   $("my-status").innerText = "已更新 " + new Date().toLocaleTimeString();
@@ -277,7 +278,8 @@ function renderMembers(list) {
     const ago = sec < 60 ? sec + "秒前" : Math.floor(sec / 60) + "分前";
     const chip = document.createElement("span");
     chip.className = "chip" + (stale ? " stale" : "") + (key === peerKey ? " sel" : "");
-    chip.innerText = (m.name || key) + "・" + ago + (stale ? "（離線）" : "");
+    const bg = (!stale && m.fg === false) ? "（背景中）" : "";
+    chip.innerText = (m.name || key) + "・" + ago + bg + (stale ? "（離線）" : "");
     chip.onclick = () => selectPeer(key);
     box.appendChild(chip);
     if (!map) return;  // 地圖還沒好只畫名單，標記等地圖建好重畫
@@ -668,11 +670,16 @@ async function doPing() {
 }
 
 document.addEventListener("visibilitychange", () => {
-  if (document.visibilityState !== "visible" || $("view-map").style.display !== "flex") return;
-  lockScreen();
-  // 回到前景立刻補一筆＋重畫
-  navigator.geolocation.getCurrentPosition(pushPos, () => {}, { enableHighAccuracy: true });
-  if (lastList) renderMembers(lastList);
+  if ($("view-map").style.display !== "flex") return;
+  if (document.visibilityState === "visible") {
+    lockScreen();
+    // 回到前景立刻補一筆＋重畫
+    navigator.geolocation.getCurrentPosition(pushPos, () => {}, { enableHighAccuracy: true });
+    if (lastList) renderMembers(lastList);
+  } else {
+    // 切後台前最後補一筆（標背景中），之後系統暫停就沒了
+    navigator.geolocation.getCurrentPosition(pushPos, () => {}, { enableHighAccuracy: true, maximumAge: 60000 });
+  }
 });
 $("dest-modal").addEventListener("click", e => { if (e.target.id === "dest-modal") { tempPlace = null; $("dest-modal").style.display = "none"; } });
 $("btn-create").onclick = doCreate;
