@@ -10,30 +10,35 @@
   .card { max-width: 420px; margin: 40px auto; background: #fff; border-radius: 12px; padding: 24px; box-shadow: 0 4px 12px rgba(0,0,0,.1); }
   h2 { margin: 0 0 16px; font-size: 1.2rem; }
   label { display: block; font-weight: bold; font-size: .9rem; margin: 12px 0 4px; }
-  input { width: 100%; padding: 12px; border: 1px solid #cbd5e1; border-radius: 8px; font-size: 1rem; }
-  button { width: 100%; padding: 14px; margin-top: 12px; border: none; border-radius: 8px; font-size: 1.05rem; font-weight: bold; cursor: pointer; }
+  input, select { width: 100%; padding: 12px; border: 1px solid #cbd5e1; border-radius: 8px; font-size: 16px; background: #fff; }
+  button { width: 100%; padding: 14px; margin-top: 12px; border: none; border-radius: 10px; font-size: 1.05rem; font-weight: bold; cursor: pointer; min-height: 48px; }
+  .btn-go { background: linear-gradient(135deg, #3b82f6, #2563eb); color: #fff; }
+  .apptitle { font-size: 1.5rem; margin: 0 0 4px; }
+  .subhint { font-size: .85rem; color: #64748b; margin: 0 0 8px; }
+  .link { color: #1d4ed8; text-decoration: underline; cursor: pointer; }
+  @media (max-width: 480px) { .card { margin: 16px 12px; padding: 20px 16px; } }
   .btn-go { background: #3b82f6; color: #fff; }
   .btn-sub { background: #e2e8f0; color: #334155; }
   .btn-leave { background: #ef4444; color: #fff; }
   #view-map { display: none; height: 100vh; height: 100dvh; flex-direction: column; overscroll-behavior: none; }
   #map { flex: 1; min-height: 0; }
-  #bar { padding: 8px 10px; background: #fff; display: flex; gap: 8px; align-items: center; box-shadow: 0 -2px 8px rgba(0,0,0,.08); font-size: .85rem; }
-  #bar .info { flex: 1; font-size: .82rem; line-height: 1.5; }
+  #bar { padding: 8px 10px 10px; background: #fff; box-shadow: 0 -2px 8px rgba(0,0,0,.08); }
+  #bar .info { font-size: .85rem; line-height: 1.7; margin-bottom: 8px; }
   #bar .info b { font-size: 1.05rem; letter-spacing: 2px; color: #1d4ed8; }
-  #bar button { width: auto; margin: 0; padding: 12px 16px; font-size: 1rem; }
+  #bar .btnrow { display: flex; gap: 8px; }
+  #bar .btnrow button { flex: 1; margin: 0; padding: 12px 0; font-size: .95rem; min-height: 46px; }
   #members { display: flex; gap: 6px; flex-wrap: nowrap; overflow-x: auto; padding: 8px 12px; background: #f8fafc; font-size: .85rem; }
-  .chip { cursor: pointer; white-space: nowrap; user-select: none; }
+  .chip { background: #e0e7ff; color: #3730a3; border-radius: 12px; padding: 4px 12px; cursor: pointer; white-space: nowrap; user-select: none; }
   .chip.sel { outline: 2px solid #4f46e5; }
   #peerinfo { display: none; padding: 6px 12px; background: #eef2ff; color: #3730a3; font-size: .85rem; font-weight: bold; }
-  #members { display: flex; gap: 6px; flex-wrap: wrap; padding: 8px 12px; background: #f8fafc; font-size: .85rem; }
-  .chip { background: #e0e7ff; color: #3730a3; border-radius: 12px; padding: 2px 10px; }
   .chip.stale { background: #e2e8f0; color: #64748b; }
   .err { color: #dc2626; font-size: .9rem; margin-top: 8px; min-height: 1.2em; }
 </style>
 </head>
 <body>
 <div class="card" id="view-home">
-  <h2>📍 外出位置共享</h2>
+  <h2 class="apptitle">📍 外出位置共享</h2>
+  <p class="subhint">輸名稱就能發起或加入，只分享給有代碼的人</p>
   <label for="in-name">你的名稱</label>
   <input id="in-name" placeholder="例如：志成" maxlength="20" autocomplete="off">
   <label for="in-dest">目的地（發起人填）</label>
@@ -43,7 +48,7 @@
   </div>
   <div id="dest-results" style="margin-top:8px"></div>
   <label for="in-mode">交通方式（發起人選）</label>
-  <select id="in-mode" style="width:100%;padding:12px;border:1px solid #cbd5e1;border-radius:8px;font-size:1rem;background:#fff">
+  <select id="in-mode" style="width:100%;padding:12px;border:1px solid #cbd5e1;border-radius:8px;font-size:16px;background:#fff">
     <option value="DRIVE">汽車</option>
     <option value="TWO_WHEELER">機車</option>
     <option value="TRANSIT">大眾運輸</option>
@@ -63,11 +68,14 @@
   <div id="peerinfo"></div>
   <div id="map"></div>
   <div id="bar">
-    <div class="info">代碼 <b id="my-code"></b>｜🎯 <span id="my-dest">—</span><br>🛣️ <span id="my-route">—</span>｜⏳ <span id="my-left"></span>｜<span id="my-status">定位中…</span></div>
-    <button class="btn-sub" id="btn-share" style="padding:12px 12px">分享</button>
-    <button class="btn-sub" id="btn-extend" style="display:none;padding:12px 12px">＋2小時</button>
-    <button class="btn-sub" id="btn-dismiss" style="display:none;padding:12px 12px;background:#fef2f2;border:2px solid #ef4444;color:#ef4444">解散</button>
-    <button class="btn-leave" id="btn-leave">離開</button>
+    <div class="info">代碼 <b id="my-code"></b>｜🎯 <span id="my-dest" class="link">—</span><br>🛣️ <span id="my-route">—</span>｜⏳ <span id="my-left"></span>｜<span id="my-status">定位中…</span></div>
+    <div class="btnrow">
+      <button class="btn-sub" id="btn-share">分享</button>
+      <button class="btn-sub" id="btn-refresh">⟳</button>
+      <button class="btn-sub" id="btn-extend" style="display:none">＋2小時</button>
+      <button class="btn-sub" id="btn-dismiss" style="display:none;background:#fef2f2;border:2px solid #ef4444;color:#ef4444">解散</button>
+      <button class="btn-leave" id="btn-leave">離開</button>
+    </div>
   </div>
 </div>
 
@@ -210,7 +218,15 @@ function drawPeer() {
     icons: [{ icon: { path: "M 0,-1 0,1", strokeOpacity: 1, strokeWeight: 2, scale: 2 }, offset: "0", repeat: "12px" }]
   });
   bar.style.display = "block";
-  bar.innerText = "我 ↔ " + (peer.name || peerKey) + "：" + fmtDist(haversineM(a, b));
+  bar.innerHTML = "";
+  const sp = document.createElement("span");
+  sp.innerText = "我 ↔ " + (peer.name || peerKey) + "：" + fmtDist(haversineM(a, b)) + "　";
+  const nb = document.createElement("button");
+  nb.innerText = "導航";
+  nb.style.cssText = "width:auto;margin:0;padding:4px 14px;font-size:.85rem;min-height:0;background:#4f46e5;color:#fff;border:none;border-radius:12px;cursor:pointer";
+  nb.onclick = navDest;
+  bar.appendChild(sp);
+  bar.appendChild(nb);
 }
 
 function renderMembers(list) {
@@ -392,7 +408,28 @@ function tickClock() {
 
 async function doExtend() {
   if (!isCreator || !sessionRef) return;
-  await sessionRef.update({ expiresAt: Date.now() + SESSION_MS });
+  try {
+    await sessionRef.update({ expiresAt: Date.now() + SESSION_MS });
+    tickClock();
+    $("my-left").innerText += "（已延長）";
+  } catch (e) {
+    alert("延長失敗：" + e.message);
+  }
+}
+
+async function doRefresh() {
+  if (map) map.__centered = false;
+  tickClock();
+  if (lastList) renderMembers(lastList);
+  if (myPos && map) map.setCenter(myPos);
+  navigator.geolocation.getCurrentPosition(pushPos, () => {}, { enableHighAccuracy: true });
+  $("my-status").innerText = "已重新整理 " + new Date().toLocaleTimeString();
+}
+
+function navDest() {
+  const d = lastDest;
+  if (!d || typeof d.lat !== "number") return alert("還沒有目的地");
+  window.open("https://www.google.com/maps/dir/?api=1&destination=" + d.lat + "," + d.lng, "_blank");
 }
 
 function expireLeave(msg) {
@@ -556,6 +593,8 @@ $("btn-create").onclick = doCreate;
 $("btn-join").onclick = doJoin;
 $("btn-leave").onclick = () => doLeave();
 $("btn-extend").onclick = doExtend;
+$("btn-refresh").onclick = doRefresh;
+$("my-dest").onclick = navDest;
 $("btn-share").onclick = doShare;
 $("btn-dismiss").onclick = doDismiss;
 $("in-code").addEventListener("input", () => {
