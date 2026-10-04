@@ -472,10 +472,9 @@ async function doExtend() {
 }
 
 async function doRefresh() {
-  if (map) map.__centered = false;
   tickClock();
   if (lastList) renderMembers(lastList);
-  if (myPos && map) map.setCenter(myPos);
+  if (myPos && map) map.panTo(myPos);
   navigator.geolocation.getCurrentPosition(pushPos, () => {}, { enableHighAccuracy: true });
   $("my-status").innerText = "已重新整理 " + new Date().toLocaleTimeString();
 }
