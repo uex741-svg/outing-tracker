@@ -1,0 +1,304 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>外出位置共享</title>
+<style>
+  * { box-sizing: border-box; }
+  body { font-family: -apple-system, "Segoe UI", Roboto, sans-serif; margin: 0; background: #f1f5f9; color: #334155; }
+  .card { max-width: 420px; margin: 40px auto; background: #fff; border-radius: 12px; padding: 24px; box-shadow: 0 4px 12px rgba(0,0,0,.1); }
+  h2 { margin: 0 0 16px; font-size: 1.2rem; }
+  label { display: block; font-weight: bold; font-size: .9rem; margin: 12px 0 4px; }
+  input { width: 100%; padding: 12px; border: 1px solid #cbd5e1; border-radius: 8px; font-size: 1rem; }
+  button { width: 100%; padding: 14px; margin-top: 12px; border: none; border-radius: 8px; font-size: 1.05rem; font-weight: bold; cursor: pointer; }
+  .btn-go { background: #3b82f6; color: #fff; }
+  .btn-sub { background: #e2e8f0; color: #334155; }
+  .btn-leave { background: #ef4444; color: #fff; }
+  #view-map { display: none; height: 100vh; flex-direction: column; }
+  #map { flex: 1; min-height: 0; }
+  #bar { padding: 10px 12px; background: #fff; display: flex; gap: 8px; align-items: center; box-shadow: 0 -2px 8px rgba(0,0,0,.08); }
+  #bar .info { flex: 1; font-size: .9rem; }
+  #bar .info b { font-size: 1.1rem; letter-spacing: 2px; color: #1d4ed8; }
+  #bar button { width: auto; margin: 0; padding: 10px 18px; }
+  #members { display: flex; gap: 6px; flex-wrap: wrap; padding: 8px 12px; background: #f8fafc; font-size: .85rem; }
+  .chip { background: #e0e7ff; color: #3730a3; border-radius: 12px; padding: 2px 10px; }
+  .chip.stale { background: #e2e8f0; color: #64748b; }
+  .err { color: #dc2626; font-size: .9rem; margin-top: 8px; min-height: 1.2em; }
+</style>
+</head>
+<body>
+<div class="card" id="view-home">
+  <h2>📍 外出位置共享</h2>
+  <label>你的名稱</label>
+  <input id="in-name" placeholder="例如：志成" maxlength="20" autocomplete="off">
+  <label>目的地（發起人填，輸入選下拉）</label>
+  <input id="in-dest" placeholder="例如：台北101" autocomplete="off">
+  <button class="btn-go" id="btn-create">發起新的共享</button>
+  <label>加入代碼（6 碼）</label>
+  <input id="in-code" placeholder="例如：A3K9P2" maxlength="6" autocomplete="off" style="text-transform:uppercase">
+  <button class="btn-sub" id="btn-join">加入共享</button>
+  <div class="err" id="home-err"></div>
+</div>
+
+<div id="view-map">
+  <div id="members"></div>
+  <div id="map"></div>
+  <div id="bar">
+    <div class="info">代碼 <b id="my-code"></b>｜🎯 <span id="my-dest">—</span><br>⏳ <span id="my-left"></span>｜<span id="my-status">定位中…</span></div>
+    <button class="btn-sub" id="btn-extend" style="display:none">＋2小時</button>
+    <button class="btn-leave" id="btn-leave">離開</button>
+  </div>
+</div>
+
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-database-compat.js"></script>
+<script>
+"use strict";
+/* ===== 請填入你自己的設定 ===== */
+const FIREBASE_CONFIG = {
+  apiKey: "AIzaSyBEocXvvrljdDB2ZvLYAOVP6RlX1YsiDjE",
+  authDomain: "outing-tracker-bbfac.firebaseapp.com",
+  databaseURL: "https://outing-tracker-bbfac-default-rtdb.firebaseio.com",
+  projectId: "outing-tracker-bbfac",
+  appId: "1:427493375703:web:b28fea435c58e48c593a92"
+};
+const GOOGLE_MAPS_KEY = "AIzaSyAuIDvARxvPpYuruCOTNOp84nmvRChHjtM";
+/* ============================ */
+const PUSH_EVERY_MS = 10000;   // 每 10 秒上傳位置
+const STALE_MS = 120000;       // 超過 2 分鐘沒更新視為離線
+
+let db = null, map = null, markers = {}, watchId = null, pushTimer = null, leftTimer = null;
+let myCode = "", myName = "", myKey = "", myRef = null, membersRef = null, sessionRef = null;
+let destMarker = null, lastDest = null, expiresAt = 0, isCreator = false, chosenPlace = null;
+const SESSION_MS = 2 * 3600 * 1000;  // 每次 2 小時
+
+const $ = id => document.getElementById(id);
+const err = m => { $("home-err").innerText = m; };
+
+function rndCode() {
+  const c = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+  let s = "";
+  for (let i = 0; i < 6; i++) s += c[Math.floor(Math.random() * c.length)];
+  return s;
+}
+
+function initFirebase() {
+  if (!db) {
+    if (!FIREBASE_CONFIG.databaseURL || FIREBASE_CONFIG.databaseURL === "PASTE_HERE")
+      throw new Error("還沒填 FIREBASE_CONFIG（看 README 申請步驟）");
+    firebase.initializeApp(FIREBASE_CONFIG);
+    db = firebase.database();
+  }
+}
+
+function loadMaps() {
+  return new Promise((resolve, reject) => {
+    if (window.google && window.google.maps) return resolve();
+    if (!GOOGLE_MAPS_KEY || GOOGLE_MAPS_KEY === "PASTE_HERE")
+      return reject(new Error("還沒填 GOOGLE_MAPS_KEY（看 README 申請步驟）"));
+    const s = document.createElement("script");
+    s.src = "https://maps.googleapis.com/maps/api/js?key=" + GOOGLE_MAPS_KEY + "&libraries=places";
+    s.onload = resolve;
+    s.onerror = () => reject(new Error("Google Maps 載入失敗，檢查金鑰"));
+    document.head.appendChild(s);
+  });
+}
+
+function pushPos(pos) {
+  if (!myRef) return;
+  myRef.set({
+    name: myName,
+    lat: pos.coords.latitude,
+    lng: pos.coords.longitude,
+    acc: Math.round(pos.coords.accuracy || 0),
+    updatedAt: Date.now()
+  });
+  $("my-status").innerText = "已更新 " + new Date().toLocaleTimeString();
+}
+
+function startTracking() {
+  if (!navigator.geolocation) { err("此瀏覽器不支援定位"); return; }
+  const onPos = p => {
+    if (!map) {
+      map = new google.maps.Map($("map"), { center: { lat: p.coords.latitude, lng: p.coords.longitude }, zoom: 15 });
+      if (lastDest) showDest(lastDest);
+    }
+    pushPos(p);
+  };
+  const onErr = e => { $("my-status").innerText = "定位失敗（請開定位權限）"; };
+  watchId = navigator.geolocation.watchPosition(onPos, onErr, { enableHighAccuracy: true, maximumAge: 5000 });
+  // 每 10 秒強制推一次（即使沒移動）
+  pushTimer = setInterval(() => {
+    navigator.geolocation.getCurrentPosition(pushPos, () => {}, { enableHighAccuracy: true });
+  }, PUSH_EVERY_MS);
+}
+
+function renderMembers(list) {
+  const box = $("members");
+  box.innerHTML = "";
+  const now = Date.now();
+  Object.keys(list || {}).forEach(key => {
+    const m = list[key];
+    const stale = now - (m.updatedAt || 0) > STALE_MS;
+    const chip = document.createElement("span");
+    chip.className = "chip" + (stale ? " stale" : "");
+    chip.innerText = (m.name || key) + (stale ? "（離線）" : "");
+    box.appendChild(chip);
+    if (!stale && typeof m.lat === "number") {
+      const pos = { lat: m.lat, lng: m.lng };
+      if (!markers[key]) {
+        markers[key] = new google.maps.Marker({ map, position: pos, title: m.name || key });
+      } else {
+        markers[key].setPosition(pos);
+      }
+    } else if (markers[key]) {
+      markers[key].setMap(null);
+      delete markers[key];
+    }
+  });
+  // 自己置中一次就好（之後手動拖地圖）
+  if (map && !map.__centered && myKey) {
+    const me = (list || {})[myKey];
+    if (me && typeof me.lat === "number") {
+      map.setCenter({ lat: me.lat, lng: me.lng });
+      map.__centered = true;
+    }
+  }
+}
+
+async function enterMap(code) {
+  myCode = code;
+  $("my-code").innerText = code;
+  $("view-home").style.display = "none";
+  $("view-map").style.display = "flex";
+  membersRef = db.ref("sessions/" + code + "/members");
+  if (!myKey) myKey = myName + "_" + Math.random().toString(36).slice(2, 6);
+  myRef = membersRef.child(myKey);
+  await myRef.onDisconnect().remove();   // 關網頁自動清除
+  membersRef.on("value", snap => renderMembers(snap.val()));
+  sessionRef = db.ref("sessions/" + code);
+  sessionRef.on("value", snap => {
+    const s = snap.val();
+    if (!s) return expireLeave("本次共享已結束");
+    expiresAt = s.expiresAt || 0;
+    isCreator = (s.creatorKey === myKey);
+    $("btn-extend").style.display = isCreator ? "" : "none";
+    if (s.dest && typeof s.dest.lat === "number") { lastDest = s.dest; if (map) showDest(s.dest); }
+    if (s.dest) $("my-dest").innerText = s.dest.name || "—";
+    tickClock();
+  });
+  leftTimer = setInterval(() => {
+    tickClock();
+    if (expiresAt && Date.now() > expiresAt) expireLeave("時間到，本次共享已結束");
+  }, 15000);
+  startTracking();
+}
+
+function showDest(d) {
+  const pos = { lat: d.lat, lng: d.lng };
+  if (!destMarker) {
+    destMarker = new google.maps.Marker({
+      map, position: pos, title: "目的地：" + d.name,
+      icon: "http://maps.google.com/mapfiles/ms/icons/green-dot.png"
+    });
+  } else {
+    destMarker.setPosition(pos);
+  }
+}
+
+function tickClock() {
+  if (!expiresAt) { $("my-left").innerText = ""; return; }
+  const ms = Math.max(0, expiresAt - Date.now());
+  const h = Math.floor(ms / 3600000), m = Math.floor(ms % 3600000 / 60000);
+  $("my-left").innerText = "剩" + h + "時" + m + "分";
+}
+
+async function doExtend() {
+  if (!isCreator || !sessionRef) return;
+  await sessionRef.update({ expiresAt: Date.now() + SESSION_MS });
+}
+
+function expireLeave(msg) {
+  doLeave(msg);
+  setTimeout(() => alert(msg), 100);
+}
+
+async function doCreate() {
+  err("");
+  myName = $("in-name").value.trim();
+  if (!myName) return err("先輸名稱");
+  if (!chosenPlace) return err("目的地請輸入後點下拉選一個");
+  try {
+    initFirebase();
+    await loadMaps();
+    myKey = myName + "_" + Math.random().toString(36).slice(2, 6);
+    const code = rndCode();
+    await db.ref("sessions/" + code).set({
+      createdAt: Date.now(),
+      expiresAt: Date.now() + SESSION_MS,
+      creatorKey: myKey,
+      dest: chosenPlace
+    });
+    await enterMap(code);
+  } catch (e) { err(e.message); }
+}
+
+async function doJoin() {
+  err("");
+  myName = $("in-name").value.trim();
+  const code = $("in-code").value.trim().toUpperCase();
+  if (!myName) return err("先輸名稱");
+  if (code.length !== 6) return err("代碼要 6 碼");
+  try {
+    initFirebase();
+    await loadMaps();
+    const snap = await db.ref("sessions/" + code).get();
+    if (!snap.exists()) return err("找不到這個代碼，問發起人確認");
+    if (snap.val().expiresAt && Date.now() > snap.val().expiresAt) return err("這個共享已結束，請發起人重開");
+    await enterMap(code);
+  } catch (e) { err(e.message); }
+}
+
+async function doLeave(msg) {
+  try {
+    if (watchId !== null) navigator.geolocation.clearWatch(watchId);
+    if (pushTimer) clearInterval(pushTimer);
+    if (leftTimer) clearInterval(leftTimer);
+    if (membersRef) membersRef.off();
+    if (sessionRef) sessionRef.off();
+    if (myRef) { await myRef.onDisconnect().cancel(); await myRef.remove(); }
+  } catch (e) {}
+  Object.values(markers).forEach(m => m.setMap(null));
+  if (destMarker) { destMarker.setMap(null); destMarker = null; }
+  markers = {}; map = null; myRef = null; membersRef = null; sessionRef = null; myKey = "";
+  expiresAt = 0; isCreator = false;
+  $("view-map").style.display = "none";
+  $("view-home").style.display = "block";
+  if (msg) err(msg);
+}
+
+function attachAutocomplete() {
+  try {
+    const ac = new google.maps.places.Autocomplete($("in-dest"), { fields: ["name", "geometry"] });
+    ac.addListener("place_changed", () => {
+      const p = ac.getPlace();
+      if (p && p.geometry && p.geometry.location) {
+        chosenPlace = { name: p.name, lat: p.geometry.location.lat(), lng: p.geometry.location.lng() };
+      } else {
+        chosenPlace = null;
+      }
+    });
+    $("in-dest").addEventListener("input", () => { chosenPlace = null; });
+  } catch (e) {}
+}
+
+$("btn-create").onclick = doCreate;
+$("btn-join").onclick = doJoin;
+$("btn-leave").onclick = () => doLeave();
+$("btn-extend").onclick = doExtend;
+// 預載地圖＋地點搜尋（金鑰沒填會在首頁顯示提醒）
+loadMaps().then(attachAutocomplete).catch(e => err(e.message + "（先照 README 申請）"));
+</script>
+</body>
+</html>
