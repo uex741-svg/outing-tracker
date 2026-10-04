@@ -41,6 +41,8 @@
   .err { color: #dc2626; font-size: .9rem; margin-top: 8px; min-height: 1.2em; }
   .divider { display: flex; align-items: center; gap: 8px; color: #94a3b8; font-size: .8rem; margin: 20px 0 4px; }
   .divider::before, .divider::after { content: ""; flex: 1; border-top: 1px solid #e2e8f0; }
+  body.join-mode #create-section, body.join-mode #create-section + .divider { display: none; }
+  body.join-mode #join-preview { background: #f0f9ff; border: 1px solid #bae6fd; border-radius: 8px; padding: 10px 12px; }
   #dest-modal { display: none; position: fixed; inset: 0; background: rgba(15,23,42,.55); z-index: 9999; padding: 20px; }
   #dest-card { background: #fff; border-radius: 12px; max-width: 380px; margin: 8vh auto 0; overflow: hidden; }
   #mini-map { height: 220px; width: 100%; }
@@ -57,6 +59,7 @@
   <p class="subhint">輸名稱就能發起或加入，只分享給有代碼的人</p>
   <label for="in-name">你的名稱</label>
   <input id="in-name" placeholder="例如：志成" maxlength="20" autocomplete="off">
+  <div id="create-section">
   <label for="in-dest">目的地（發起人填）</label>
   <div style="display:flex; gap:8px">
     <input id="in-dest" placeholder="例如：台北101" autocomplete="off" style="flex:1">
@@ -72,6 +75,7 @@
     <option value="BICYCLE">自行車</option>
   </select>
   <button class="btn-go" id="btn-create">發起新的共享</button>
+  </div>
   <div class="divider">或加入別人的</div>
   <label for="in-code">加入代碼（6 碼）</label>
   <input id="in-code" placeholder="例如：A3K9P2" maxlength="6" autocomplete="off" style="text-transform:uppercase">
@@ -89,7 +93,7 @@
     <div class="btnrow">
       <button class="btn-sub" id="btn-ping" style="background:#dcfce7;border:2px solid #22c55e;color:#15803d">回報</button>
       <button class="btn-sub" id="btn-share">分享</button>
-      <button class="btn-sub" id="btn-refresh">⟳</button>
+      <button class="btn-sub" id="btn-refresh">⟳ 刷新</button>
       <button class="btn-sub" id="btn-extend" style="display:none">＋2小時</button>
       <button class="btn-sub" id="btn-dismiss" style="display:none;background:#fef2f2;border:2px solid #ef4444;color:#ef4444">解散</button>
       <button class="btn-leave" id="btn-leave">離開</button>
@@ -411,7 +415,7 @@ async function enterMap(code) {
   $("view-map").style.display = "flex";
   membersRef = db.ref("sessions/" + code + "/members");
   if (!myKey) myKey = myName + "_" + Math.random().toString(36).slice(2, 6);
-  try { localStorage.setItem("outing_last", JSON.stringify({ code, name: myName })); } catch (e) {}
+  try { localStorage.setItem("outing_last", JSON.stringify({ code, name: myName, myKey })); } catch (e) {}
   myRef = membersRef.child(myKey);
   await myRef.onDisconnect().remove();   // 關網頁自動清除
   membersRef.on("value", snap => renderMembers(snap.val()));
@@ -621,6 +625,10 @@ function attachAutocomplete() {
 
 async function doShare() {
   const url = location.origin + location.pathname + "?c=" + myCode;
+  const data = { title: "外出位置共享", text: "加入我的位置共享（代碼 " + myCode + "）", url };
+  if (navigator.share) {
+    try { await navigator.share(data); return; } catch (e) { if (e && e.name === "AbortError") return; }
+  }
   try {
     await navigator.clipboard.writeText(url);
     alert("分享連結已複製，對方打開後只輸名稱按加入即可");
@@ -698,6 +706,7 @@ $("in-code").addEventListener("input", () => {
 try {
   const qc = new URLSearchParams(location.search).get("c");
   if (qc && /^[A-Za-z0-9]{6}$/.test(qc)) {
+    document.body.classList.add("join-mode");
     $("in-code").value = qc.toUpperCase();
     previewSession(qc.toUpperCase());
   }
@@ -722,6 +731,7 @@ async function tryRestore() {
       return;
     }
     myName = s.name;
+    myKey = s.myKey || "";
     $("in-name").value = s.name;
     $("in-code").value = s.code;
     await enterMap(s.code);
