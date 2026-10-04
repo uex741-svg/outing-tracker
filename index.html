@@ -291,12 +291,11 @@ async function routeViaRoutesApi(o, d, mode) {
   return { poly: r.polyline.encodedPolyline, distM: r.distanceMeters, durS: parseInt(r.duration) || 0 };
 }
 
-// 雙保險：內建 Directions 優先，Routes API 備援，都不行就回 null（共享照開，只是沒藍線）
+// 三級：內建 Directions → Routes API → 起訖直線（保證有線）
 async function computeRoute(o, d, mode) {
-  routeErrs = [];
-  try { return await routeViaDirections(o, d, mode); } catch (e) { routeErrs.push("內建:" + e.message); }
-  try { return await routeViaRoutesApi(o, d, mode); } catch (e) { routeErrs.push("Routes:" + e.message); }
-  return null;
+  try { return await routeViaDirections(o, d, mode); } catch (e) {}
+  try { return await routeViaRoutesApi(o, d, mode); } catch (e) {}
+  return { straight: [o, d], distM: Math.round(haversineM(o, d)), durS: null };
 }
 
 function decodePoly(enc) {
@@ -315,16 +314,25 @@ function decodePoly(enc) {
 
 function drawRoute() {
   if (routeLine) { routeLine.setMap(null); routeLine = null; }
-  if (!map || !lastRoute || !lastRoute.poly) return;
-  routeLine = new google.maps.Polyline({
-    path: decodePoly(lastRoute.poly),
-    geodesic: true, strokeColor: "#2563eb", strokeOpacity: 0.9, strokeWeight: 5, map
-  });
+  if (!map || !lastRoute) return;
+  if (lastRoute.poly) {
+    routeLine = new google.maps.Polyline({
+      path: decodePoly(lastRoute.poly),
+      geodesic: true, strokeColor: "#2563eb", strokeOpacity: 0.9, strokeWeight: 5, map
+    });
+  } else if (lastRoute.straight) {
+    routeLine = new google.maps.Polyline({
+      path: lastRoute.straight,
+      geodesic: true, strokeOpacity: 0, map,
+      icons: [{ icon: { path: "M 0,-1 0,1", strokeOpacity: 1, strokeWeight: 2, scale: 2 }, offset: "0", repeat: "12px" }]
+    });
+  }
 }
 
 function routeText() {
   if (!lastRoute) return "—";
   const km = (lastRoute.distM / 1000).toFixed(1);
+  if (lastRoute.durS == null) return "直線 " + km + "公里";
   const min = Math.round(lastRoute.durS / 60);
   return (MODE_LABEL[lastRoute.mode] || "") + " " + km + "公里 約" + min + "分";
 }
@@ -408,7 +416,6 @@ async function doCreate() {
     err("規劃路線中…");
     const route = await computeRoute(origin, chosenPlace, mode);
     err("");
-    if (!route) setTimeout(() => alert("路線畫不出（" + routeErrs.join("；") + "），共享照常建立"), 500);
     myKey = myName + "_" + Math.random().toString(36).slice(2, 6);
     const code = rndCode();
     await db.ref("sessions/" + code).set({
@@ -463,10 +470,11 @@ async function doLeave(msg) {
 }
 
 function wireSearch(inId, btnId, boxId, cb) {
-  $(btnId).onclick = () => {
+  let timer = null;
+  const run = () => {
     err("");
     const kw = $(inId).value.trim();
-    if (!kw) return err("先輸關鍵字");
+    if (!kw) return;
     const box = $(boxId);
     box.innerHTML = "搜尋中…";
     new google.maps.Geocoder().geocode({ address: kw }, (res, status) => {
@@ -475,19 +483,28 @@ function wireSearch(inId, btnId, boxId, cb) {
         return err("找不到地點，換個關鍵字試試");
       }
       box.innerHTML = "";
-      res.slice(0, 3).forEach((r, i) => {
+      res.slice(0, 5).forEach((r, i) => {
         const b = document.createElement("button");
         b.className = "btn-sub";
         b.innerText = (i + 1) + ". " + r.formatted_address;
         b.onclick = () => {
           cb({ name: r.formatted_address, lat: r.geometry.location.lat(), lng: r.geometry.location.lng() });
+          $(inId).value = r.formatted_address;
           box.innerHTML = "<div style='color:#15803d;font-weight:bold'>已選：" + r.formatted_address + "</div>";
         };
         box.appendChild(b);
       });
     });
   };
-  $(inId).addEventListener("input", () => { cb(null); $(boxId).innerHTML = ""; });
+  $(btnId).onclick = run;
+  // 打字即聯想（停 600ms 自動搜）
+  $(inId).addEventListener("input", () => {
+    cb(null);
+    $(boxId).innerHTML = "";
+    clearTimeout(timer);
+    const kw = $(inId).value.trim();
+    if (kw.length >= 2) timer = setTimeout(run, 600);
+  });
 }
 
 function attachAutocomplete() {
