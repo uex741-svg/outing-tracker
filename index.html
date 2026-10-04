@@ -4,6 +4,12 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <title>外出位置共享</title>
+<meta name="theme-color" content="#3b82f6">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📍</text></svg>">
 <style>
   * { box-sizing: border-box; }
   body { font-family: -apple-system, "Segoe UI", Roboto, sans-serif; margin: 0; background: #f1f5f9; color: #334155; }
@@ -25,8 +31,8 @@
   #bar { padding: 8px 10px 10px; background: #fff; box-shadow: 0 -2px 8px rgba(0,0,0,.08); }
   #bar .info { font-size: .85rem; line-height: 1.7; margin-bottom: 8px; }
   #bar .info b { font-size: 1.05rem; letter-spacing: 2px; color: #1d4ed8; }
-  #bar .btnrow { display: flex; gap: 8px; }
-  #bar .btnrow button { flex: 1; margin: 0; padding: 12px 0; font-size: .95rem; min-height: 46px; }
+  #bar .btnrow { display: flex; gap: 8px; flex-wrap: wrap; }
+  #bar .btnrow button { flex: 1 1 28%; margin: 0; padding: 12px 0; font-size: .95rem; min-height: 46px; }
   #members { display: flex; gap: 6px; flex-wrap: nowrap; overflow-x: auto; padding: 8px 12px; background: #f8fafc; font-size: .85rem; }
   .chip { background: #e0e7ff; color: #3730a3; border-radius: 12px; padding: 4px 12px; cursor: pointer; white-space: nowrap; user-select: none; }
   .chip.sel { outline: 2px solid #4f46e5; }
@@ -81,6 +87,7 @@
   <div id="bar">
     <div class="info">代碼 <b id="my-code"></b>｜🎯 <span id="my-dest" class="link">—</span><br>🛣️ <span id="my-route">—</span>｜⏳ <span id="my-left"></span>｜<span id="my-status">定位中…</span></div>
     <div class="btnrow">
+      <button class="btn-sub" id="btn-ping" style="background:#dcfce7;border:2px solid #22c55e;color:#15803d">回報</button>
       <button class="btn-sub" id="btn-share">分享</button>
       <button class="btn-sub" id="btn-refresh">⟳</button>
       <button class="btn-sub" id="btn-extend" style="display:none">＋2小時</button>
@@ -655,8 +662,17 @@ $("btn-mini-ok").onclick = () => {
   $("dest-modal").style.display = "none";
 };
 $("btn-mini-cancel").onclick = () => { tempPlace = null; $("dest-modal").style.display = "none"; };
+async function doPing() {
+  $("my-status").innerText = "回報中…";
+  navigator.geolocation.getCurrentPosition(pushPos, () => { $("my-status").innerText = "定位失敗，請開定位權限"; }, { enableHighAccuracy: true, timeout: 15000 });
+}
+
 document.addEventListener("visibilitychange", () => {
-  if (document.visibilityState === "visible" && $("view-map").style.display === "flex") lockScreen();
+  if (document.visibilityState !== "visible" || $("view-map").style.display !== "flex") return;
+  lockScreen();
+  // 回到前景立刻補一筆＋重畫
+  navigator.geolocation.getCurrentPosition(pushPos, () => {}, { enableHighAccuracy: true });
+  if (lastList) renderMembers(lastList);
 });
 $("dest-modal").addEventListener("click", e => { if (e.target.id === "dest-modal") { tempPlace = null; $("dest-modal").style.display = "none"; } });
 $("btn-create").onclick = doCreate;
@@ -664,6 +680,7 @@ $("btn-join").onclick = doJoin;
 $("btn-leave").onclick = () => doLeave();
 $("btn-extend").onclick = doExtend;
 $("btn-refresh").onclick = doRefresh;
+$("btn-ping").onclick = doPing;
 $("my-dest").onclick = navDest;
 $("btn-share").onclick = doShare;
 $("btn-dismiss").onclick = doDismiss;
@@ -678,7 +695,12 @@ try {
     previewSession(qc.toUpperCase());
   }
 } catch (e) {}
-// 預載地圖＋地點搜尋（金鑰沒填會在首頁顯示提醒），完後試著恢復上次會話
+// PWA：可加到主畫面獨立開（僅 http(s)，file:// 跳過）
+try {
+  if (location.protocol.indexOf("http") === 0 && "serviceWorker" in navigator) {
+    navigator.serviceWorker.register("sw.js").catch(() => {});
+  }
+} catch (e) {}
 loadMaps().then(() => { attachAutocomplete(); tryRestore(); }).catch(e => err(e.message + "（先照 README 申請）"));
 
 async function tryRestore() {
