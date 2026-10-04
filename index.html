@@ -101,11 +101,13 @@ function loadMaps() {
     if (window.google && window.google.maps) return resolve();
     if (!GOOGLE_MAPS_KEY || GOOGLE_MAPS_KEY === "PASTE_HERE")
       return reject(new Error("還沒填 GOOGLE_MAPS_KEY（看 README 申請步驟）"));
+    window.__mapsResolve = () => { try { delete window.__mapsResolve; } catch (e) {} resolve(); };
     const s = document.createElement("script");
-    s.src = "https://maps.googleapis.com/maps/api/js?key=" + GOOGLE_MAPS_KEY;
-    s.onload = resolve;
+    s.async = true;
+    s.src = "https://maps.googleapis.com/maps/api/js?key=" + GOOGLE_MAPS_KEY + "&loading=async&callback=__mapsResolve";
     s.onerror = () => reject(new Error("Google Maps 載入失敗，檢查金鑰"));
     document.head.appendChild(s);
+    setTimeout(() => reject(new Error("Google Maps 載入逾時，檢查網路")), 20000);
   });
 }
 
