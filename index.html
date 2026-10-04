@@ -121,7 +121,7 @@
 <script>
 "use strict";
 /* ===== 請填入你自己的設定 ===== */
-const APP_VER = "v1.9.0";
+const APP_VER = "v1.9.1";
 const FIREBASE_CONFIG = {
   apiKey: "AIzaSyBEocXvvrljdDB2ZvLYAOVP6RlX1YsiDjE",
   authDomain: "outing-tracker-bbfac.firebaseapp.com",
@@ -133,6 +133,7 @@ const GOOGLE_MAPS_KEY = "AIzaSyD5hJgTozfzrzdlObL8LTrAv2NRe3VEsEc";
 /* ============================ */
 const PUSH_EVERY_MS = 10000;   // 每 10 秒上傳位置
 const STALE_MS = 120000;       // 超過 2 分鐘沒更新視為離線
+const CLEAN_MS = 1800000;      // 超過 30 分鐘沒更新才由在線的人清掉（鎖屏不斷頭，只變灰）
 
 let db = null, map = null, markers = {}, watchId = null, pushTimer = null, leftTimer = null;
 let myCode = "", myName = "", myKey = "", myRef = null, membersRef = null, sessionRef = null;
@@ -425,7 +426,8 @@ async function enterMap(code) {
   }
   try { localStorage.setItem("outing_last", JSON.stringify({ code, name: myName, myKey })); } catch (e) {}
   myRef = membersRef.child(myKey);
-  await myRef.onDisconnect().remove();   // 關網頁自動清除
+  // 不再用 onDisconnect刪自己：睡著斷線會誤刪，改由大家清30分鐘前的
+  try { await myRef.onDisconnect().cancel(); } catch (e) {}
   membersRef.on("value", snap => renderMembers(snap.val()));
   sessionRef = db.ref("sessions/" + code);
   sessionRef.on("value", snap => {
@@ -442,7 +444,17 @@ async function enterMap(code) {
   });
   leftTimer = setInterval(() => {
     tickClock();
-    if (lastList) renderMembers(lastList);  // 順便刷新每人幾秒前
+    if (lastList) {
+      renderMembers(lastList);  // 順便刷新每人幾秒前
+      // 清掉超過 30 分鐘沒更新的人（自己除外）
+      try {
+        Object.keys(lastList).forEach(k => {
+          const m = lastList[k];
+          const ts = (m.updatedAt || 0) < 1e12 ? (m.updatedAt || 0) * 1000 : (m.updatedAt || 0);
+          if (k !== myKey && Date.now() - ts > CLEAN_MS) membersRef.child(k).remove();
+        });
+      } catch (e) {}
+    }
     if (expiresAt && Date.now() > expiresAt) expireLeave("時間到，本次共享已結束");
   }, 15000);
   lockScreen();  // 盡量保持螢幕不鎖（支援的瀏覽器才有效）
@@ -559,7 +571,7 @@ async function doLeave(msg) {
     if (leftTimer) clearInterval(leftTimer);
     if (membersRef) membersRef.off();
     if (sessionRef) sessionRef.off();
-    if (myRef) { await myRef.onDisconnect().cancel(); await myRef.remove(); }
+    if (myRef) { await myRef.remove(); }
   } catch (e) {}
   Object.values(markers).forEach(m => m.setMap(null));
   if (destMarker) { destMarker.setMap(null); destMarker = null; }
