@@ -293,8 +293,8 @@ async function routeViaRoutesApi(o, d, mode) {
 
 // 三級：內建 Directions → Routes API → 起訖直線（保證有線）
 async function computeRoute(o, d, mode) {
-  try { return await routeViaDirections(o, d, mode); } catch (e) {}
-  try { return await routeViaRoutesApi(o, d, mode); } catch (e) {}
+  try { return await routeViaDirections(o, d, mode); } catch (e) { console.warn("route-directions-fail", e.message); }
+  try { return await routeViaRoutesApi(o, d, mode); } catch (e) { console.warn("route-routesapi-fail", e.message); }
   return { straight: [o, d], distM: Math.round(haversineM(o, d)), durS: null };
 }
 
