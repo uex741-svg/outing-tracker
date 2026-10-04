@@ -82,6 +82,7 @@
   <div id="join-preview" style="margin-top:8px;font-size:.9rem;color:#0369a1"></div>
   <button class="btn-sub" id="btn-join">加入共享</button>
   <div class="err" id="home-err"></div>
+  <div style="text-align:center;color:#94a3b8;font-size:.75rem;margin-top:12px" id="app-ver"></div>
 </div>
 
 <div id="view-map">
@@ -120,6 +121,7 @@
 <script>
 "use strict";
 /* ===== 請填入你自己的設定 ===== */
+const APP_VER = "v1.9.0";
 const FIREBASE_CONFIG = {
   apiKey: "AIzaSyBEocXvvrljdDB2ZvLYAOVP6RlX1YsiDjE",
   authDomain: "outing-tracker-bbfac.firebaseapp.com",
@@ -184,7 +186,7 @@ function pushPos(pos) {
     fg: !document.hidden,
     updatedAt: Date.now()
   });
-  $("my-status").innerText = "已更新 " + new Date().toLocaleTimeString();
+  $("my-status").innerText = "已更新 " + new Date().toLocaleTimeString() + "（±" + Math.round(pos.coords.accuracy || 0) + "公尺）";
 }
 
 function startTracking() {
@@ -679,6 +681,7 @@ $("btn-mini-ok").onclick = () => {
   $("dest-modal").style.display = "none";
 };
 $("btn-mini-cancel").onclick = () => { tempPlace = null; $("dest-modal").style.display = "none"; };
+$("app-ver").innerText = "版本 " + APP_VER;
 async function doPing() {
   $("my-status").innerText = "回報中…";
   navigator.geolocation.getCurrentPosition(pushPos, () => { $("my-status").innerText = "定位失敗，請開定位權限"; }, { enableHighAccuracy: true, timeout: 15000 });
