@@ -123,7 +123,7 @@ const STALE_MS = 120000;       // 超過 2 分鐘沒更新視為離線
 
 let db = null, map = null, markers = {}, watchId = null, pushTimer = null, leftTimer = null;
 let myCode = "", myName = "", myKey = "", myRef = null, membersRef = null, sessionRef = null;
-let destMarker = null, routeLine = null, peerLine = null, iconCache = {}, miniMap = null, miniMarker = null, tempPlace = null;
+let destMarker = null, routeLine = null, peerLine = null, iconCache = {}, miniMap = null, miniMarker = null, tempPlace = null, wakeLock = null;
 let lastDest = null, lastRoute = null, lastList = null, myPos = null, peerKey = null;
 let expiresAt = 0, isCreator = false, chosenPlace = null, routeErrs = [];
 const SESSION_MS = 2 * 3600 * 1000;  // 每次 2 小時
@@ -387,6 +387,14 @@ function routeText() {
   return (MODE_LABEL[lastRoute.mode] || "") + " " + km + "公里 約" + min + "分";
 }
 
+async function lockScreen() {
+  try {
+    if (!("wakeLock" in navigator) || wakeLock) return;
+    wakeLock = await navigator.wakeLock.request("screen");
+    wakeLock.addEventListener("release", () => { wakeLock = null; });
+  } catch (e) {}
+}
+
 async function enterMap(code) {
   myCode = code;
   $("my-code").innerText = code;
@@ -416,6 +424,7 @@ async function enterMap(code) {
     if (lastList) renderMembers(lastList);  // 順便刷新每人幾秒前
     if (expiresAt && Date.now() > expiresAt) expireLeave("時間到，本次共享已結束");
   }, 15000);
+  lockScreen();  // 盡量保持螢幕不鎖（支援的瀏覽器才有效）
   startTracking();
 }
 
@@ -522,6 +531,7 @@ async function doJoin() {
 
 async function doLeave(msg) {
   try {
+    if (wakeLock) { await wakeLock.release(); wakeLock = null; }
     if (watchId !== null) navigator.geolocation.clearWatch(watchId);
     if (pushTimer) clearInterval(pushTimer);
     if (leftTimer) clearInterval(leftTimer);
@@ -645,6 +655,9 @@ $("btn-mini-ok").onclick = () => {
   $("dest-modal").style.display = "none";
 };
 $("btn-mini-cancel").onclick = () => { tempPlace = null; $("dest-modal").style.display = "none"; };
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible" && $("view-map").style.display === "flex") lockScreen();
+});
 $("dest-modal").addEventListener("click", e => { if (e.target.id === "dest-modal") { tempPlace = null; $("dest-modal").style.display = "none"; } });
 $("btn-create").onclick = doCreate;
 $("btn-join").onclick = doJoin;
