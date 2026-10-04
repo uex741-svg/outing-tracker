@@ -32,12 +32,6 @@
   <h2>📍 外出位置共享</h2>
   <label for="in-name">你的名稱</label>
   <input id="in-name" placeholder="例如：志成" maxlength="20" autocomplete="off">
-  <label for="in-orig">出發地（發起人填）</label>
-  <div style="display:flex; gap:8px">
-    <input id="in-orig" placeholder="例如：台北車站" autocomplete="off" style="flex:1">
-    <button class="btn-sub" id="btn-search-orig" style="width:auto; margin-top:0; padding:12px 16px; white-space:nowrap">搜尋</button>
-  </div>
-  <div id="orig-results" style="margin-top:8px"></div>
   <label for="in-dest">目的地（發起人填）</label>
   <div style="display:flex; gap:8px">
     <input id="in-dest" placeholder="例如：台北101" autocomplete="off" style="flex:1">
@@ -88,8 +82,8 @@ const STALE_MS = 120000;       // 超過 2 分鐘沒更新視為離線
 
 let db = null, map = null, markers = {}, watchId = null, pushTimer = null, leftTimer = null;
 let myCode = "", myName = "", myKey = "", myRef = null, membersRef = null, sessionRef = null;
-let destMarker = null, origMarker = null, routeLine = null, iconCache = {};
-let lastDest = null, lastOrigin = null, lastRoute = null, expiresAt = 0, isCreator = false, chosenPlace = null, chosenOrigin = null;
+let destMarker = null, routeLine = null, iconCache = {};
+let lastDest = null, lastRoute = null, expiresAt = 0, isCreator = false, chosenPlace = null;
 const SESSION_MS = 2 * 3600 * 1000;  // 每次 2 小時
 
 const $ = id => document.getElementById(id);
@@ -144,7 +138,6 @@ function startTracking() {
     if (!map) {
       map = new google.maps.Map($("map"), { center: { lat: p.coords.latitude, lng: p.coords.longitude }, zoom: 15 });
       if (lastDest) showDest(lastDest);
-      if (lastOrigin) showOrig(lastOrigin);
       drawRoute();
     }
     pushPos(p);
@@ -261,18 +254,6 @@ function routeText() {
   return (MODE_LABEL[lastRoute.mode] || "") + " " + km + "公里 約" + min + "分";
 }
 
-function showOrig(o) {
-  const pos = { lat: o.lat, lng: o.lng };
-  if (!origMarker) {
-    origMarker = new google.maps.Marker({
-      map, position: pos, title: "出發地：" + o.name,
-      icon: "http://maps.google.com/mapfiles/ms/icons/blue-dot.png"
-    });
-  } else {
-    origMarker.setPosition(pos);
-  }
-}
-
 async function enterMap(code) {
   myCode = code;
   $("my-code").innerText = code;
@@ -292,7 +273,6 @@ async function enterMap(code) {
     $("btn-extend").style.display = isCreator ? "" : "none";
     if (s.dest && typeof s.dest.lat === "number") { lastDest = s.dest; if (map) showDest(s.dest); }
     if (s.dest) $("my-dest").innerText = s.dest.name || "—";
-    if (s.origin && typeof s.origin.lat === "number") { lastOrigin = s.origin; if (map) showOrig(s.origin); }
     if (s.route) { lastRoute = Object.assign({ mode: s.mode }, s.route); drawRoute(); $("my-route").innerText = routeText(); }
     tickClock();
   });
@@ -336,14 +316,21 @@ async function doCreate() {
   err("");
   myName = $("in-name").value.trim();
   if (!myName) return err("先輸名稱");
-  if (!chosenOrigin) return err("出發地請按搜尋後點選一個候選");
   if (!chosenPlace) return err("目的地請按搜尋後點選一個候選");
   const mode = $("in-mode").value;
   try {
     initFirebase();
     await loadMaps();
+    err("定位中…");
+    const origin = await new Promise((resolve, reject) => {
+      navigator.geolocation.getCurrentPosition(
+        p => resolve({ name: "現在位置", lat: p.coords.latitude, lng: p.coords.longitude }),
+        () => reject(new Error("抓不到定位，請開定位權限再試")),
+        { enableHighAccuracy: true, timeout: 15000 }
+      );
+    });
     err("規劃路線中…");
-    const route = await computeRoute(chosenOrigin, chosenPlace, mode);
+    const route = await computeRoute(origin, chosenPlace, mode);
     err("");
     myKey = myName + "_" + Math.random().toString(36).slice(2, 6);
     const code = rndCode();
@@ -351,7 +338,7 @@ async function doCreate() {
       createdAt: Date.now(),
       expiresAt: Date.now() + SESSION_MS,
       creatorKey: myKey,
-      origin: chosenOrigin,
+      origin: origin,
       dest: chosenPlace,
       mode: mode,
       route: route
@@ -387,10 +374,9 @@ async function doLeave(msg) {
   } catch (e) {}
   Object.values(markers).forEach(m => m.setMap(null));
   if (destMarker) { destMarker.setMap(null); destMarker = null; }
-  if (origMarker) { origMarker.setMap(null); origMarker = null; }
   if (routeLine) { routeLine.setMap(null); routeLine = null; }
   markers = {}; map = null; myRef = null; membersRef = null; sessionRef = null; myKey = "";
-  expiresAt = 0; isCreator = false; lastDest = null; lastOrigin = null; lastRoute = null;
+  expiresAt = 0; isCreator = false; lastDest = null; lastRoute = null;
   $("view-map").style.display = "none";
   $("view-home").style.display = "block";
   if (msg) err(msg);
@@ -425,8 +411,7 @@ function wireSearch(inId, btnId, boxId, cb) {
 }
 
 function attachAutocomplete() {
-  // 出發地＋目的地共用同一套搜尋（免 Places API）
-  wireSearch("in-orig", "btn-search-orig", "orig-results", v => { chosenOrigin = v; });
+  // 目的地搜尋（出發地＝發起時 GPS，不用填）
   wireSearch("in-dest", "btn-search", "dest-results", v => { chosenPlace = v; });
 }
 
