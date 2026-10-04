@@ -32,12 +32,26 @@
   <h2>📍 外出位置共享</h2>
   <label for="in-name">你的名稱</label>
   <input id="in-name" placeholder="例如：志成" maxlength="20" autocomplete="off">
+  <label for="in-orig">出發地（發起人填）</label>
+  <div style="display:flex; gap:8px">
+    <input id="in-orig" placeholder="例如：台北車站" autocomplete="off" style="flex:1">
+    <button class="btn-sub" id="btn-search-orig" style="width:auto; margin-top:0; padding:12px 16px; white-space:nowrap">搜尋</button>
+  </div>
+  <div id="orig-results" style="margin-top:8px"></div>
   <label for="in-dest">目的地（發起人填）</label>
   <div style="display:flex; gap:8px">
     <input id="in-dest" placeholder="例如：台北101" autocomplete="off" style="flex:1">
     <button class="btn-sub" id="btn-search" style="width:auto; margin-top:0; padding:12px 16px; white-space:nowrap">搜尋</button>
   </div>
   <div id="dest-results" style="margin-top:8px"></div>
+  <label for="in-mode">交通方式（發起人選）</label>
+  <select id="in-mode" style="width:100%;padding:12px;border:1px solid #cbd5e1;border-radius:8px;font-size:1rem;background:#fff">
+    <option value="DRIVE">汽車</option>
+    <option value="TWO_WHEELER">機車</option>
+    <option value="TRANSIT">大眾運輸</option>
+    <option value="WALK">步行</option>
+    <option value="BICYCLE">自行車</option>
+  </select>
   <button class="btn-go" id="btn-create">發起新的共享</button>
   <label for="in-code">加入代碼（6 碼）</label>
   <input id="in-code" placeholder="例如：A3K9P2" maxlength="6" autocomplete="off" style="text-transform:uppercase">
@@ -49,7 +63,7 @@
   <div id="members"></div>
   <div id="map"></div>
   <div id="bar">
-    <div class="info">代碼 <b id="my-code"></b>｜🎯 <span id="my-dest">—</span><br>⏳ <span id="my-left"></span>｜<span id="my-status">定位中…</span></div>
+    <div class="info">代碼 <b id="my-code"></b>｜🎯 <span id="my-dest">—</span><br>🛣️ <span id="my-route">—</span>｜⏳ <span id="my-left"></span>｜<span id="my-status">定位中…</span></div>
     <button class="btn-sub" id="btn-extend" style="display:none">＋2小時</button>
     <button class="btn-leave" id="btn-leave">離開</button>
   </div>
@@ -74,7 +88,8 @@ const STALE_MS = 120000;       // 超過 2 分鐘沒更新視為離線
 
 let db = null, map = null, markers = {}, watchId = null, pushTimer = null, leftTimer = null;
 let myCode = "", myName = "", myKey = "", myRef = null, membersRef = null, sessionRef = null;
-let destMarker = null, lastDest = null, expiresAt = 0, isCreator = false, chosenPlace = null;
+let destMarker = null, origMarker = null, routeLine = null, iconCache = {};
+let lastDest = null, lastOrigin = null, lastRoute = null, expiresAt = 0, isCreator = false, chosenPlace = null, chosenOrigin = null;
 const SESSION_MS = 2 * 3600 * 1000;  // 每次 2 小時
 
 const $ = id => document.getElementById(id);
@@ -129,6 +144,8 @@ function startTracking() {
     if (!map) {
       map = new google.maps.Map($("map"), { center: { lat: p.coords.latitude, lng: p.coords.longitude }, zoom: 15 });
       if (lastDest) showDest(lastDest);
+      if (lastOrigin) showOrig(lastOrigin);
+      drawRoute();
     }
     pushPos(p);
   };
@@ -138,6 +155,23 @@ function startTracking() {
   pushTimer = setInterval(() => {
     navigator.geolocation.getCurrentPosition(pushPos, () => {}, { enableHighAccuracy: true });
   }, PUSH_EVERY_MS);
+}
+
+function hashHue(s) { let h = 0; for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) % 360; return h; }
+function iconFor(name) {
+  if (iconCache[name]) return iconCache[name];
+  const c = document.createElement("canvas"); c.width = 128; c.height = 52;
+  const x = c.getContext("2d");
+  x.fillStyle = "hsl(" + hashHue(name || "?") + ",70%,45%)";
+  x.beginPath();
+  if (x.roundRect) x.roundRect(14, 2, 100, 34, 17); else x.rect(14, 2, 100, 34);
+  x.fill();
+  x.beginPath(); x.moveTo(56, 36); x.lineTo(72, 36); x.lineTo(64, 50); x.closePath(); x.fill();
+  x.fillStyle = "#fff"; x.font = "bold 19px sans-serif"; x.textAlign = "center";
+  x.fillText((name || "?").slice(0, 5), 64, 27);
+  const icon = { url: c.toDataURL(), scaledSize: new google.maps.Size(64, 26), anchor: new google.maps.Point(32, 26) };
+  iconCache[name] = icon;
+  return icon;
 }
 
 function renderMembers(list) {
@@ -154,9 +188,10 @@ function renderMembers(list) {
     if (!stale && typeof m.lat === "number") {
       const pos = { lat: m.lat, lng: m.lng };
       if (!markers[key]) {
-        markers[key] = new google.maps.Marker({ map, position: pos, title: m.name || key });
+        markers[key] = new google.maps.Marker({ map, position: pos, title: m.name || key, icon: iconFor(m.name || key) });
       } else {
         markers[key].setPosition(pos);
+        markers[key].setIcon(iconFor(m.name || key));
       }
     } else if (markers[key]) {
       markers[key].setMap(null);
@@ -170,6 +205,71 @@ function renderMembers(list) {
       map.setCenter({ lat: me.lat, lng: me.lng });
       map.__centered = true;
     }
+  }
+}
+
+const MODE_LABEL = { DRIVE: "汽車", TWO_WHEELER: "機車", TRANSIT: "大眾運輸", WALK: "步行", BICYCLE: "自行車" };
+
+async function computeRoute(o, d, mode) {
+  const res = await fetch("https://routes.googleapis.com/directions/v2:routes", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-Goog-Api-Key": GOOGLE_MAPS_KEY,
+      "X-Goog-FieldMask": "routes.duration,routes.distanceMeters,routes.polyline.encodedPolyline"
+    },
+    body: JSON.stringify({
+      origin: { location: { latLng: { latitude: o.lat, longitude: o.lng } } },
+      destination: { location: { latLng: { latitude: d.lat, longitude: d.lng } } },
+      travelMode: mode, languageCode: "zh-TW", units: "METRIC"
+    })
+  });
+  if (!res.ok) throw new Error("路線規劃失敗（" + res.status + "）：檢查 Routes API 有無啟用");
+  const j = await res.json();
+  if (!j.routes || !j.routes.length) throw new Error("查無路線，換交通方式或地點試試");
+  const r = j.routes[0];
+  return { poly: r.polyline.encodedPolyline, distM: r.distanceMeters, durS: parseInt(r.duration) || 0 };
+}
+
+function decodePoly(enc) {
+  let lat = 0, lng = 0, out = [], i = 0;
+  while (i < enc.length) {
+    let b, shift = 0, res = 0;
+    do { b = enc.charCodeAt(i++) - 63; res |= (b & 31) << shift; shift += 5; } while (b >= 32);
+    lat += (res & 1) ? ~(res >> 1) : (res >> 1);
+    shift = 0; res = 0;
+    do { b = enc.charCodeAt(i++) - 63; res |= (b & 31) << shift; shift += 5; } while (b >= 32);
+    lng += (res & 1) ? ~(res >> 1) : (res >> 1);
+    out.push({ lat: lat / 1e5, lng: lng / 1e5 });
+  }
+  return out;
+}
+
+function drawRoute() {
+  if (routeLine) { routeLine.setMap(null); routeLine = null; }
+  if (!map || !lastRoute || !lastRoute.poly) return;
+  routeLine = new google.maps.Polyline({
+    path: decodePoly(lastRoute.poly),
+    geodesic: true, strokeColor: "#2563eb", strokeOpacity: 0.9, strokeWeight: 5, map
+  });
+}
+
+function routeText() {
+  if (!lastRoute) return "—";
+  const km = (lastRoute.distM / 1000).toFixed(1);
+  const min = Math.round(lastRoute.durS / 60);
+  return (MODE_LABEL[lastRoute.mode] || "") + " " + km + "公里 約" + min + "分";
+}
+
+function showOrig(o) {
+  const pos = { lat: o.lat, lng: o.lng };
+  if (!origMarker) {
+    origMarker = new google.maps.Marker({
+      map, position: pos, title: "出發地：" + o.name,
+      icon: "http://maps.google.com/mapfiles/ms/icons/blue-dot.png"
+    });
+  } else {
+    origMarker.setPosition(pos);
   }
 }
 
@@ -192,6 +292,8 @@ async function enterMap(code) {
     $("btn-extend").style.display = isCreator ? "" : "none";
     if (s.dest && typeof s.dest.lat === "number") { lastDest = s.dest; if (map) showDest(s.dest); }
     if (s.dest) $("my-dest").innerText = s.dest.name || "—";
+    if (s.origin && typeof s.origin.lat === "number") { lastOrigin = s.origin; if (map) showOrig(s.origin); }
+    if (s.route) { lastRoute = Object.assign({ mode: s.mode }, s.route); drawRoute(); $("my-route").innerText = routeText(); }
     tickClock();
   });
   leftTimer = setInterval(() => {
@@ -234,17 +336,25 @@ async function doCreate() {
   err("");
   myName = $("in-name").value.trim();
   if (!myName) return err("先輸名稱");
+  if (!chosenOrigin) return err("出發地請按搜尋後點選一個候選");
   if (!chosenPlace) return err("目的地請按搜尋後點選一個候選");
+  const mode = $("in-mode").value;
   try {
     initFirebase();
     await loadMaps();
+    err("規劃路線中…");
+    const route = await computeRoute(chosenOrigin, chosenPlace, mode);
+    err("");
     myKey = myName + "_" + Math.random().toString(36).slice(2, 6);
     const code = rndCode();
     await db.ref("sessions/" + code).set({
       createdAt: Date.now(),
       expiresAt: Date.now() + SESSION_MS,
       creatorKey: myKey,
-      dest: chosenPlace
+      origin: chosenOrigin,
+      dest: chosenPlace,
+      mode: mode,
+      route: route
     });
     await enterMap(code);
   } catch (e) { err(e.message); }
@@ -277,20 +387,21 @@ async function doLeave(msg) {
   } catch (e) {}
   Object.values(markers).forEach(m => m.setMap(null));
   if (destMarker) { destMarker.setMap(null); destMarker = null; }
+  if (origMarker) { origMarker.setMap(null); origMarker = null; }
+  if (routeLine) { routeLine.setMap(null); routeLine = null; }
   markers = {}; map = null; myRef = null; membersRef = null; sessionRef = null; myKey = "";
-  expiresAt = 0; isCreator = false;
+  expiresAt = 0; isCreator = false; lastDest = null; lastOrigin = null; lastRoute = null;
   $("view-map").style.display = "none";
   $("view-home").style.display = "block";
   if (msg) err(msg);
 }
 
-function attachAutocomplete() {
-  // 改用 Geocoder（免 Places API，新專案可用）：搜尋後列候選點選
-  $("btn-search").onclick = () => {
+function wireSearch(inId, btnId, boxId, cb) {
+  $(btnId).onclick = () => {
     err("");
-    const kw = $("in-dest").value.trim();
-    if (!kw) return err("先輸目的地關鍵字");
-    const box = $("dest-results");
+    const kw = $(inId).value.trim();
+    if (!kw) return err("先輸關鍵字");
+    const box = $(boxId);
     box.innerHTML = "搜尋中…";
     new google.maps.Geocoder().geocode({ address: kw }, (res, status) => {
       if (status !== "OK" || !res || !res.length) {
@@ -303,18 +414,20 @@ function attachAutocomplete() {
         b.className = "btn-sub";
         b.innerText = (i + 1) + ". " + r.formatted_address;
         b.onclick = () => {
-          chosenPlace = {
-            name: r.formatted_address,
-            lat: r.geometry.location.lat(),
-            lng: r.geometry.location.lng()
-          };
+          cb({ name: r.formatted_address, lat: r.geometry.location.lat(), lng: r.geometry.location.lng() });
           box.innerHTML = "<div style='color:#15803d;font-weight:bold'>已選：" + r.formatted_address + "</div>";
         };
         box.appendChild(b);
       });
     });
   };
-  $("in-dest").addEventListener("input", () => { chosenPlace = null; $("dest-results").innerHTML = ""; });
+  $(inId).addEventListener("input", () => { cb(null); $(boxId).innerHTML = ""; });
+}
+
+function attachAutocomplete() {
+  // 出發地＋目的地共用同一套搜尋（免 Places API）
+  wireSearch("in-orig", "btn-search-orig", "orig-results", v => { chosenOrigin = v; });
+  wireSearch("in-dest", "btn-search", "dest-results", v => { chosenPlace = v; });
 }
 
 $("btn-create").onclick = doCreate;
