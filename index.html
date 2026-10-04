@@ -53,6 +53,7 @@
   <button class="btn-go" id="btn-create">發起新的共享</button>
   <label for="in-code">加入代碼（6 碼）</label>
   <input id="in-code" placeholder="例如：A3K9P2" maxlength="6" autocomplete="off" style="text-transform:uppercase">
+  <div id="join-preview" style="margin-top:8px;font-size:.9rem;color:#0369a1"></div>
   <button class="btn-sub" id="btn-join">加入共享</button>
   <div class="err" id="home-err"></div>
 </div>
@@ -63,7 +64,9 @@
   <div id="map"></div>
   <div id="bar">
     <div class="info">代碼 <b id="my-code"></b>｜🎯 <span id="my-dest">—</span><br>🛣️ <span id="my-route">—</span>｜⏳ <span id="my-left"></span>｜<span id="my-status">定位中…</span></div>
-    <button class="btn-sub" id="btn-extend" style="display:none">＋2小時</button>
+    <button class="btn-sub" id="btn-share" style="padding:12px 12px">分享</button>
+    <button class="btn-sub" id="btn-extend" style="display:none;padding:12px 12px">＋2小時</button>
+    <button class="btn-sub" id="btn-dismiss" style="display:none;padding:12px 12px;background:#fef2f2;border:2px solid #ef4444;color:#ef4444">解散</button>
     <button class="btn-leave" id="btn-leave">離開</button>
   </div>
 </div>
@@ -355,6 +358,7 @@ async function enterMap(code) {
     expiresAt = s.expiresAt || 0;
     isCreator = (s.creatorKey === myKey);
     $("btn-extend").style.display = isCreator ? "" : "none";
+    $("btn-dismiss").style.display = isCreator ? "" : "none";
     if (s.dest && typeof s.dest.lat === "number") { lastDest = s.dest; if (map) showDest(s.dest); }
     if (s.dest) $("my-dest").innerText = s.dest.name || "—";
     if (s.route) { lastRoute = Object.assign({ mode: s.mode }, s.route); drawRoute(); $("my-route").innerText = routeText(); }
@@ -512,10 +516,59 @@ function attachAutocomplete() {
   wireSearch("in-dest", "btn-search", "dest-results", v => { chosenPlace = v; });
 }
 
+async function doShare() {
+  const url = location.origin + location.pathname + "?c=" + myCode;
+  try {
+    await navigator.clipboard.writeText(url);
+    alert("分享連結已複製，對方打開後只輸名稱按加入即可");
+  } catch (e) {
+    prompt("複製這個連結給對方：", url);
+  }
+}
+
+async function doDismiss() {
+  if (!isCreator || !sessionRef) return;
+  if (!confirm("確定解散？所有人都會退出")) return;
+  try { await sessionRef.remove(); } catch (e) {}
+}
+
+async function previewSession(code) {
+  const box = $("join-preview");
+  box.innerText = "";
+  if (!code || code.length !== 6) return;
+  try {
+    initFirebase();
+    const snap = await db.ref("sessions/" + code).get();
+    if (!snap.exists()) return;
+    const s = snap.val();
+    if (s.expiresAt && Date.now() > s.expiresAt) { box.innerText = "此共享已結束"; return; }
+    box.innerText = "🎯 " + ((s.dest && s.dest.name) || "—") + "｜" + (MODE_LABEL[s.mode] || "") + "｜剩餘" + fmtLeft(s.expiresAt);
+  } catch (e) {}
+}
+
+function fmtLeft(exp) {
+  if (!exp) return "—";
+  const ms = Math.max(0, exp - Date.now());
+  return Math.floor(ms / 3600000) + "時" + Math.floor(ms % 3600000 / 60000) + "分";
+}
+
 $("btn-create").onclick = doCreate;
 $("btn-join").onclick = doJoin;
 $("btn-leave").onclick = () => doLeave();
 $("btn-extend").onclick = doExtend;
+$("btn-share").onclick = doShare;
+$("btn-dismiss").onclick = doDismiss;
+$("in-code").addEventListener("input", () => {
+  previewSession($("in-code").value.trim().toUpperCase());
+});
+// 分享連結進來：自動填代碼＋預覽，名稱自己輸
+try {
+  const qc = new URLSearchParams(location.search).get("c");
+  if (qc && /^[A-Za-z0-9]{6}$/.test(qc)) {
+    $("in-code").value = qc.toUpperCase();
+    previewSession(qc.toUpperCase());
+  }
+} catch (e) {}
 // 預載地圖＋地點搜尋（金鑰沒填會在首頁顯示提醒），完後試著恢復上次會話
 loadMaps().then(() => { attachAutocomplete(); tryRestore(); }).catch(e => err(e.message + "（先照 README 申請）"));
 
