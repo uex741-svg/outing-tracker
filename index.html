@@ -15,12 +15,16 @@
   .btn-go { background: #3b82f6; color: #fff; }
   .btn-sub { background: #e2e8f0; color: #334155; }
   .btn-leave { background: #ef4444; color: #fff; }
-  #view-map { display: none; height: 100vh; flex-direction: column; }
+  #view-map { display: none; height: 100vh; height: 100dvh; flex-direction: column; overscroll-behavior: none; }
   #map { flex: 1; min-height: 0; }
-  #bar { padding: 10px 12px; background: #fff; display: flex; gap: 8px; align-items: center; box-shadow: 0 -2px 8px rgba(0,0,0,.08); }
-  #bar .info { flex: 1; font-size: .9rem; }
-  #bar .info b { font-size: 1.1rem; letter-spacing: 2px; color: #1d4ed8; }
-  #bar button { width: auto; margin: 0; padding: 10px 18px; }
+  #bar { padding: 8px 10px; background: #fff; display: flex; gap: 8px; align-items: center; box-shadow: 0 -2px 8px rgba(0,0,0,.08); font-size: .85rem; }
+  #bar .info { flex: 1; font-size: .82rem; line-height: 1.5; }
+  #bar .info b { font-size: 1.05rem; letter-spacing: 2px; color: #1d4ed8; }
+  #bar button { width: auto; margin: 0; padding: 12px 16px; font-size: 1rem; }
+  #members { display: flex; gap: 6px; flex-wrap: nowrap; overflow-x: auto; padding: 8px 12px; background: #f8fafc; font-size: .85rem; }
+  .chip { cursor: pointer; white-space: nowrap; user-select: none; }
+  .chip.sel { outline: 2px solid #4f46e5; }
+  #peerinfo { display: none; padding: 6px 12px; background: #eef2ff; color: #3730a3; font-size: .85rem; font-weight: bold; }
   #members { display: flex; gap: 6px; flex-wrap: wrap; padding: 8px 12px; background: #f8fafc; font-size: .85rem; }
   .chip { background: #e0e7ff; color: #3730a3; border-radius: 12px; padding: 2px 10px; }
   .chip.stale { background: #e2e8f0; color: #64748b; }
@@ -55,6 +59,7 @@
 
 <div id="view-map">
   <div id="members"></div>
+  <div id="peerinfo"></div>
   <div id="map"></div>
   <div id="bar">
     <div class="info">代碼 <b id="my-code"></b>｜🎯 <span id="my-dest">—</span><br>🛣️ <span id="my-route">—</span>｜⏳ <span id="my-left"></span>｜<span id="my-status">定位中…</span></div>
@@ -82,8 +87,9 @@ const STALE_MS = 120000;       // 超過 2 分鐘沒更新視為離線
 
 let db = null, map = null, markers = {}, watchId = null, pushTimer = null, leftTimer = null;
 let myCode = "", myName = "", myKey = "", myRef = null, membersRef = null, sessionRef = null;
-let destMarker = null, routeLine = null, iconCache = {};
-let lastDest = null, lastRoute = null, expiresAt = 0, isCreator = false, chosenPlace = null;
+let destMarker = null, routeLine = null, peerLine = null, iconCache = {};
+let lastDest = null, lastRoute = null, lastList = null, myPos = null, peerKey = null;
+let expiresAt = 0, isCreator = false, chosenPlace = null, routeErrs = [];
 const SESSION_MS = 2 * 3600 * 1000;  // 每次 2 小時
 
 const $ = id => document.getElementById(id);
@@ -122,6 +128,7 @@ function loadMaps() {
 
 function pushPos(pos) {
   if (!myRef) return;
+  myPos = { lat: pos.coords.latitude, lng: pos.coords.longitude };
   myRef.set({
     name: myName,
     lat: pos.coords.latitude,
@@ -139,6 +146,7 @@ function startTracking() {
       map = new google.maps.Map($("map"), { center: { lat: p.coords.latitude, lng: p.coords.longitude }, zoom: 15 });
       if (lastDest) showDest(lastDest);
       drawRoute();
+      if (lastList) renderMembers(lastList);  // 地圖建好後重畫標記（修加入者空白）
     }
     pushPos(p);
   };
@@ -167,7 +175,43 @@ function iconFor(name) {
   return icon;
 }
 
+function haversineM(a, b) {
+  const R = 6371000, r = Math.PI / 180;
+  const dLat = (b.lat - a.lat) * r, dLng = (b.lng - a.lng) * r;
+  const s = Math.sin(dLat / 2) ** 2 + Math.cos(a.lat * r) * Math.cos(b.lat * r) * Math.sin(dLng / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(s));
+}
+
+function fmtDist(m) {
+  return m < 1000 ? "相距約" + Math.round(m) + "公尺" : "相距約" + (m / 1000).toFixed(1) + "公里";
+}
+
+function selectPeer(key) {
+  peerKey = (peerKey === key) ? null : key;  // 再點一次取消
+  drawPeer();
+  if (lastList) renderMembers(lastList);
+}
+
+function drawPeer() {
+  if (peerLine) { peerLine.setMap(null); peerLine = null; }
+  const bar = $("peerinfo");
+  const peer = peerKey && lastList ? lastList[peerKey] : null;
+  if (!peer || !myPos || typeof peer.lat !== "number" || !map) {
+    bar.style.display = "none";
+    bar.innerText = "";
+    return;
+  }
+  const a = myPos, b = { lat: peer.lat, lng: peer.lng };
+  peerLine = new google.maps.Polyline({
+    path: [a, b], map, geodesic: true, strokeOpacity: 0,
+    icons: [{ icon: { path: "M 0,-1 0,1", strokeOpacity: 1, strokeWeight: 2, scale: 2 }, offset: "0", repeat: "12px" }]
+  });
+  bar.style.display = "block";
+  bar.innerText = "我 ↔ " + (peer.name || peerKey) + "：" + fmtDist(haversineM(a, b));
+}
+
 function renderMembers(list) {
+  lastList = list;
   const box = $("members");
   box.innerHTML = "";
   const now = Date.now();
@@ -175,9 +219,11 @@ function renderMembers(list) {
     const m = list[key];
     const stale = now - (m.updatedAt || 0) > STALE_MS;
     const chip = document.createElement("span");
-    chip.className = "chip" + (stale ? " stale" : "");
+    chip.className = "chip" + (stale ? " stale" : "") + (key === peerKey ? " sel" : "");
     chip.innerText = (m.name || key) + (stale ? "（離線）" : "");
+    chip.onclick = () => selectPeer(key);
     box.appendChild(chip);
+    if (!map) return;  // 地圖還沒好只畫名單，標記等地圖建好重畫
     if (!stale && typeof m.lat === "number") {
       const pos = { lat: m.lat, lng: m.lng };
       if (!markers[key]) {
@@ -199,6 +245,7 @@ function renderMembers(list) {
       map.__centered = true;
     }
   }
+  drawPeer();  // 有選人就重畫虛線＋距離
 }
 
 const MODE_LABEL = { DRIVE: "汽車", TWO_WHEELER: "機車", TRANSIT: "大眾運輸", WALK: "步行", BICYCLE: "自行車" };
@@ -246,8 +293,9 @@ async function routeViaRoutesApi(o, d, mode) {
 
 // 雙保險：內建 Directions 優先，Routes API 備援，都不行就回 null（共享照開，只是沒藍線）
 async function computeRoute(o, d, mode) {
-  try { return await routeViaDirections(o, d, mode); } catch (e) {}
-  try { return await routeViaRoutesApi(o, d, mode); } catch (e) {}
+  routeErrs = [];
+  try { return await routeViaDirections(o, d, mode); } catch (e) { routeErrs.push("內建:" + e.message); }
+  try { return await routeViaRoutesApi(o, d, mode); } catch (e) { routeErrs.push("Routes:" + e.message); }
   return null;
 }
 
@@ -288,6 +336,7 @@ async function enterMap(code) {
   $("view-map").style.display = "flex";
   membersRef = db.ref("sessions/" + code + "/members");
   if (!myKey) myKey = myName + "_" + Math.random().toString(36).slice(2, 6);
+  try { localStorage.setItem("outing_last", JSON.stringify({ code, name: myName })); } catch (e) {}
   myRef = membersRef.child(myKey);
   await myRef.onDisconnect().remove();   // 關網頁自動清除
   membersRef.on("value", snap => renderMembers(snap.val()));
@@ -359,7 +408,7 @@ async function doCreate() {
     err("規劃路線中…");
     const route = await computeRoute(origin, chosenPlace, mode);
     err("");
-    if (!route) setTimeout(() => alert("路線暫時畫不出，共享照常建立（人員位置正常）"), 500);
+    if (!route) setTimeout(() => alert("路線畫不出（" + routeErrs.join("；") + "），共享照常建立"), 500);
     myKey = myName + "_" + Math.random().toString(36).slice(2, 6);
     const code = rndCode();
     await db.ref("sessions/" + code).set({
@@ -404,7 +453,10 @@ async function doLeave(msg) {
   if (destMarker) { destMarker.setMap(null); destMarker = null; }
   if (routeLine) { routeLine.setMap(null); routeLine = null; }
   markers = {}; map = null; myRef = null; membersRef = null; sessionRef = null; myKey = "";
-  expiresAt = 0; isCreator = false; lastDest = null; lastRoute = null;
+  expiresAt = 0; isCreator = false; lastDest = null; lastRoute = null; lastList = null; myPos = null; peerKey = null;
+  if (peerLine) { peerLine.setMap(null); peerLine = null; }
+  $("peerinfo").style.display = "none";
+  try { localStorage.removeItem("outing_last"); } catch (e) {}
   $("view-map").style.display = "none";
   $("view-home").style.display = "block";
   if (msg) err(msg);
@@ -447,8 +499,26 @@ $("btn-create").onclick = doCreate;
 $("btn-join").onclick = doJoin;
 $("btn-leave").onclick = () => doLeave();
 $("btn-extend").onclick = doExtend;
-// 預載地圖＋地點搜尋（金鑰沒填會在首頁顯示提醒）
-loadMaps().then(attachAutocomplete).catch(e => err(e.message + "（先照 README 申請）"));
+// 預載地圖＋地點搜尋（金鑰沒填會在首頁顯示提醒），完後試著恢復上次會話
+loadMaps().then(() => { attachAutocomplete(); tryRestore(); }).catch(e => err(e.message + "（先照 README 申請）"));
+
+async function tryRestore() {
+  let s = null;
+  try { s = JSON.parse(localStorage.getItem("outing_last") || "null"); } catch (e) {}
+  if (!s || !s.code || !s.name) return;
+  try {
+    initFirebase();
+    const snap = await db.ref("sessions/" + s.code).get();
+    if (!snap.exists() || (snap.val().expiresAt && Date.now() > snap.val().expiresAt)) {
+      localStorage.removeItem("outing_last");
+      return;
+    }
+    myName = s.name;
+    $("in-name").value = s.name;
+    $("in-code").value = s.code;
+    await enterMap(s.code);
+  } catch (e) {}
+}
 </script>
 </body>
 </html>
